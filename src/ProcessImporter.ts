@@ -7,7 +7,7 @@ import * as WITProcessInterfaces from "vso-node-api/interfaces/WorkItemTrackingP
 import { IWorkItemTrackingProcessDefinitionsApi as WITProcessDefinitionApi, IWorkItemTrackingProcessDefinitionsApi } from "vso-node-api/WorkItemTrackingProcessDefinitionsApi";
 import { IWorkItemTrackingProcessApi as WITProcessApi, IWorkItemTrackingProcessApi } from "vso-node-api/WorkItemTrackingProcessApi";
 import { IWorkItemTrackingApi as WITApi } from "vso-node-api/WorkItemTrackingApi";
-import { PICKLIST_NO_ACTION } from "./Constants";
+import { PICKLIST_NO_ACTION, regexRemoveHypen } from "./Constants";
 import { Engine } from "./Engine";
 import { ImportError, ValidationError } from "./Errors";
 import { ICommandLineOptions, IConfigurationFile, IDictionaryStringTo, IProcessPayload, IWITLayout, IWITRules, IWITStates } from "./Interfaces";
@@ -331,7 +331,7 @@ export class ProcessImporter {
         for (const sourceState of witStateEntry.states) {
             try {
                 const existingStates: WITProcessDefinitionsInterfaces.WorkItemStateResultModel[] = targetWITStates.filter(targetState => sourceState.name === targetState.name);
-                if (existingStates.length === 0) {  //does not exist on target
+                if (existingStates.length === 0) {  // does not exist on target
                     const createdState = await Engine.Task(
                         () => this._witProcessDefinitionApi.createStateDefinition(sourceState, payload.process.typeId, witStateEntry.workItemTypeRefName),
                         `Create state '${sourceState.name}' in '${witStateEntry.workItemTypeRefName}' work item type`);
@@ -341,21 +341,46 @@ export class ProcessImporter {
                 }
                 else {
                     if (sourceState.hidden) { // if state exists on target, only update if hidden 
-                        const updatedState = await Engine.Task(
+                        const hiddenState = await Engine.Task(
                             () => this._witProcessDefinitionApi.hideStateDefinition({ hidden: true }, payload.process.typeId, witStateEntry.workItemTypeRefName, existingStates[0].id),
                             `Hide state '${sourceState.name}' in '${witStateEntry.workItemTypeRefName}' work item type`);
-                        if (!updatedState || updatedState.id !== sourceState.id || !updatedState.hidden) {
+                        if (!hiddenState || hiddenState.name !== sourceState.name || !hiddenState.hidden) {
                             throw new ImportError(`Unable to hide state '${sourceState.name}' in '${witStateEntry.workItemTypeRefName}' work item type, server returned empty result, id or state is not hidden.`);
+                        }
+                    }
+
+                    const existingState = existingStates[0];
+                    if (sourceState.color !== existingState.color || sourceState.stateCategory !== existingState.stateCategory || sourceState.name !== existingState.name) {
+                        // Inherited state can be edited in custom work item types.
+                        const updatedState = await Engine.Task(
+                            () => this._witProcessDefinitionApi.updateStateDefinition(Utility.toUdpateStateDefinition(sourceState), payload.process.typeId, witStateEntry.workItemTypeRefName, existingState.id),
+                            `Update state '${sourceState.name}' in '${witStateEntry.workItemTypeRefName}' work item type`);
+                        if (!updatedState || updatedState.name !== sourceState.name) {
+                            throw new ImportError(`Unable to update state '${sourceState.name}' in '${witStateEntry.workItemTypeRefName}' work item type, server returned empty result, id or state is not hidden.`);
                         }
                     }
                 }
             }
             catch (error) {
                 Utility.handleKnownError(error);
-                throw new ImportError(`Unable to create/hide state '${sourceState.name}' in '${witStateEntry.workItemTypeRefName}' work item type, see logs for details`);
+                throw new ImportError(`Unable to create/hide/update state '${sourceState.name}' in '${witStateEntry.workItemTypeRefName}' work item type, see logs for details`);
+            }
+        }
+
+        for (const targetState of targetWITStates) {
+            const sourceStateMatchingTarget: WITProcessDefinitionsInterfaces.WorkItemStateResultModel[] = witStateEntry.states.filter(sourceState => sourceState.name === targetState.name);
+            if (sourceStateMatchingTarget.length === 0) {
+                try {
+                    await Engine.Task(() => this._witProcessDefinitionApi.deleteStateDefinition(payload.process.typeId, witStateEntry.workItemTypeRefName, targetState.id),
+                        `Delete state '${targetState.name}' in '${witStateEntry.workItemTypeRefName}' work item type`);
+                }
+                catch (error) {
+                    throw new ImportError(`Unable to delete state '${targetState.name}' in '${witStateEntry.workItemTypeRefName}' work item type, see logs for details`);
+                }
             }
         }
     }
+
 
     private async _importStates(payload: IProcessPayload): Promise<void> {
         for (const witStateEntry of payload.states) {
@@ -395,25 +420,32 @@ export class ProcessImporter {
                 return await Engine.Task(
                     () => this._witProcessApi.getBehaviors(payload.process.typeId),
                     `Get behaviors on target account`);
-            }, () => new ImportError(`Fialed to get behaviors on target account.`));
+            }, () => new ImportError(`Failed to get behaviors on target account.`));
+
+        const behaviorIdToRealNameBehavior: { [id: string]: WITProcessDefinitionsInterfaces.BehaviorReplaceModel } = {};
 
         for (const behavior of payload.behaviors) {
             try {
                 const existing = behaviorsOnTarget.some(b => b.id === behavior.id);
                 if (!existing) {
                     const createBehavior: WITProcessDefinitionsInterfaces.BehaviorCreateModel = Utility.toCreateBehavior(behavior);
+                    // Use a random name to avoid conflict on scenarios involving a name swap 
+                    behaviorIdToRealNameBehavior[behavior.id] = Utility.toReplaceBehavior(behavior);
+                    createBehavior.name = Guid.create().toString().replace(regexRemoveHypen, "");
                     const createdBehavior = await Engine.Task(
                         () => this._witProcessDefinitionApi.createBehavior(createBehavior, payload.process.typeId),
-                        `Create behavior '${behavior.name}'`);
+                        `Create behavior '${behavior.id}' with fake name '${behavior.name}'`);
                     if (!createdBehavior || createdBehavior.id !== behavior.id) {
                         throw new ImportError(`Failed to create behavior '${behavior.name}', server returned empty result or id does not match.`)
                     }
                 }
                 else {
                     const replaceBehavior: WITProcessDefinitionsInterfaces.BehaviorReplaceModel = Utility.toReplaceBehavior(behavior);
+                    behaviorIdToRealNameBehavior[behavior.id] = Utility.toReplaceBehavior(behavior);
+                    replaceBehavior.name = Guid.create().toString().replace(regexRemoveHypen, "");
                     const replacedBehavior = await Engine.Task(
                         () => this._witProcessDefinitionApi.replaceBehavior(replaceBehavior, payload.process.typeId, behavior.id),
-                        `Replace behavior '${behavior.name}'`);
+                        `Replace behavior '${behavior.id}' with fake name '${behavior.name}'`);
                     if (!replacedBehavior) {
                         throw new ImportError(`Failed to replace behavior '${behavior.name}', server returned empty result.`)
                     }
@@ -422,6 +454,17 @@ export class ProcessImporter {
             catch (error) {
                 logger.logException(error);
                 throw new ImportError(`Failed to import behavior ${behavior.name}, see logs for details.`);
+            }
+        }
+
+        // Recover the behavior names to what they should be
+        for (const id in behaviorIdToRealNameBehavior) {
+            const behaviorWithRealName = behaviorIdToRealNameBehavior[id];
+            const replacedBehavior = await Engine.Task(
+                () => this._witProcessDefinitionApi.replaceBehavior(behaviorWithRealName, payload.process.typeId, id),
+                `Replace behavior '${id}' to it's real name '${behaviorWithRealName.name}'`);
+            if (!replacedBehavior) {
+                throw new ImportError(`Failed to replace behavior id '${id}' to its real name, server returned empty result.`)
             }
         }
     }
@@ -526,6 +569,10 @@ export class ProcessImporter {
     }
 
     private async _validateProcess(payload: IProcessPayload): Promise<void> {
+        if (payload.process.properties.class != WITProcessInterfaces.ProcessClass.Derived) {
+            throw new ValidationError("Only inherited process is supported to be imported.");
+        }
+
         const targetProcesses: WITProcessInterfaces.ProcessModel[] =
             await Utility.tryCatchWithKnownError(async () => {
                 return await Engine.Task(() => this._witProcessApi.getProcesses(), `Get processes on target account`);
@@ -572,9 +619,10 @@ export class ProcessImporter {
         const ret: IDictionaryStringTo<WITProcessDefinitionsInterfaces.PickListModel> = {};
         const promises: Promise<any>[] = [];
         for (const field of fields) {
-            assert(field.isPicklist || !field.picklistId, "Non picklist field should not have picklist")
-            if (field.isPicklist && field.picklistId) {
-                promises.push(this._witProcessDefinitionApi.getList(field.picklistId).then(list => ret[field.referenceName] = list));
+            const anyField = <any>field; // TODO: When vso-node-api updates, remove this hack
+            assert(field.isPicklist || !anyField.picklistId, "Non picklist field should not have picklist")
+            if (field.isPicklist && anyField.picklistId) {
+                promises.push(this._witProcessDefinitionApi.getList(anyField.picklistId).then(list => ret[field.referenceName] = list));
             }
         }
         await Promise.all(promises);
@@ -669,7 +717,7 @@ export class ProcessImporter {
 
         await Utility.tryCatchWithKnownError(
             () => this._getApis(),
-            () => new ImportError(`Failed to connect to target account '${this._config.targetAccountUrl}' - check url and token.`));
+            () => new ImportError(`Failed to connect or authenticate with target account '${this._config.targetAccountUrl}' - check url and token.`));
 
         try {
             if (this._config.targetProcessName) {

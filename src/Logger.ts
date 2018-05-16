@@ -30,7 +30,7 @@ class ConsoleLogger implements ILogger {
     }
 
     private _log(message: string, logLevel: LogLevel) {
-        const outputMessage: string = `[${LogLevel[logLevel]}] [${(new Date(Date.now())).toISOString()}] ${message}`;
+        const outputMessage: string = `[${LogLevel[logLevel].toUpperCase()}] [${(new Date(Date.now())).toISOString()}] ${message}`;
         console.log(outputMessage);
     }
 }
@@ -85,5 +85,5 @@ export function InitializeFileLogger(logFilename: string, maxLogLevel: LogLevel)
     if (!existsSync(folder)) {
         mkdirpSync(folder);
     }
-    this.logger = new FileLogger(logFilename, maxLogLevel);
+    logger = new FileLogger(logFilename, maxLogLevel);
 }

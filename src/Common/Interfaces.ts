@@ -15,7 +15,7 @@ export enum LogLevel {
 export enum Modes {
     import,
     export,
-    both
+    migrate
 }
 
 export interface IExportOptions {
@@ -44,12 +44,8 @@ export interface IConfigurationOptions {
     processFilename?: string;
     overwritePicklist?: boolean;
     continueOnRuleImportFailure?: boolean;
-    skipImportControlContributions?: boolean;
-    skipImportGroupOrPageContributions?: boolean;
-}
-
-export interface IImportConfiguration extends IConfigurationFile {
-    removeProcessOnTarget?: boolean;
+    continueOnIdentityDefaultValueFailure?: boolean;
+    skipImportFormContributions?: boolean;
 }
 
 export interface IProcessPayload {

@@ -96,7 +96,6 @@ export class ProcessImporter {
         const fieldsToCreate: WITProcessDefinitionsInterfaces.FieldModel[] = await Engine.Task(() => this._getFieldsToCreate(payload), "Get fields to be created on target process");
 
         if (fieldsToCreate.length > 0) {
-            const createFieldPromises: Promise<any>[] = [];
             for (const field of fieldsToCreate) {
                 try {
                     const fieldCreated = await Engine.Task(() => this._witProcessDefinitionApi.createField(field, payload.process.typeId), `Create field '${field.id}'`);
@@ -116,18 +115,39 @@ export class ProcessImporter {
         }
     }
 
-
     /**Add fields at a Work Item Type scope*/
     private async _addFieldsToWorkItemTypes(payload: IProcessPayload): Promise<void> {
         for (const entry of payload.workItemTypeFields) {
             for (const field of entry.fields) {
                 try {
+                    // Make separate call to set default value on identity field allow failover 
+                    const defaultValue = field.defaultValue;
+                    field.defaultValue = field.type === WITProcessDefinitionsInterfaces.FieldType.Identity ? null : defaultValue;
+
                     const fieldAdded = await Engine.Task(
                         () => this._witProcessDefinitionApi.addFieldToWorkItemType(field, payload.process.typeId, entry.workItemTypeRefName),
                         `Add field '${field.referenceName}' to work item type '${entry.workItemTypeRefName}'`);
 
                     if (!fieldAdded || fieldAdded.referenceName !== field.referenceName) {
                         throw new ImportError(`Failed to add field '${field.referenceName}' to work item type '${entry.workItemTypeRefName}', server returned empty result or reference name does not match.`);
+                    }
+
+                    if (defaultValue) {
+                        field.defaultValue = defaultValue;
+                        try {
+                            const fieldAddedWithDefaultValue = await Engine.Task(
+                                () => this._witProcessDefinitionApi.addFieldToWorkItemType(field, payload.process.typeId, entry.workItemTypeRefName),
+                                `Updated field '${field.referenceName}' with default value to work item type '${entry.workItemTypeRefName}'`);
+                        }
+                        catch (error) {
+                            if (this._config.options && this._config.options.continueOnIdentityDefaultValueFailure === true) {
+                                logger.logWarning(`Failed to set field '${field.referenceName}' with default value '${JSON.stringify(defaultValue, null, 2)}' to work item type '${entry.workItemTypeRefName}', continue because 'skipImportControlContributions' is set to true`);
+                            }
+                            else {
+                                logger.logException(error);
+                                throw new ImportError(`Failed to set field '${field.referenceName}' with default value '${JSON.stringify(defaultValue, null, 2)}' to work item type '${entry.workItemTypeRefName}'. You may set skipImportControlContributions = true in configuraiton file to continue.`);
+                            }
+                        }
                     }
                 }
                 catch (error) {
@@ -191,8 +211,9 @@ export class ProcessImporter {
             throw new ImportError(`Encountered null page in work item type '${witLayout.workItemTypeRefName}'`);
         }
 
-        if (page.isContribution && !this._config.options.skipImportGroupOrPageContributions !== false) {
+        if (page.isContribution && this._config.options.skipImportFormContributions === true) {
             // skip import page contriubtion unless user explicitly asks so
+            return;
         }
 
         let newPage: WITProcessDefinitionsInterfaces.Page; //The newly created page, contains the pageId required to create groups.
@@ -218,8 +239,9 @@ export class ProcessImporter {
             for (const group of section.groups) {
                 let newGroup: WITProcessDefinitionsInterfaces.Group;
 
-                if (group.isContribution === true && !this._config.options.skipImportGroupOrPageContributions !== false) {
+                if (group.isContribution === true && this._config.options.skipImportFormContributions === true) {
                     // skip import group contriubtion unless user explicitly asks so
+                    continue;
                 }
 
                 if (group.controls.length !== 0 && group.controls[0].controlType === "HtmlFieldControl") {
@@ -280,7 +302,7 @@ export class ProcessImporter {
                             try {
                                 let createControl: WITProcessDefinitionsInterfaces.Control = Utility.toCreateControl(control);
 
-                                if (control.controlType === "WebpageControl" || (control.isContribution === true && this._config.options.skipImportControlContributions)) {
+                                if (control.controlType === "WebpageControl" || (control.isContribution === true && this._config.options.skipImportFormContributions === true)) {
                                     // Skip web page control for now since not supported in inherited process.
                                     continue;
                                 }

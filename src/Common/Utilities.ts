@@ -172,7 +172,7 @@ export class Utility {
     }
 
     public static validateConfiguration(configuration: IConfigurationFile, mode: Modes): boolean {
-        if (mode === Modes.export || mode === Modes.both) {
+        if (mode === Modes.export || mode === Modes.migrate) {
             if (!configuration.sourceAccountUrl || !url.parse(configuration.sourceAccountUrl).host) {
                 logger.logError(`[Configuration validation] Missing or invalid source account url: '${configuration.sourceAccountUrl}'.`);
                 return false;
@@ -187,7 +187,7 @@ export class Utility {
             }
         }
 
-        if (mode === Modes.import || mode === Modes.both) {
+        if (mode === Modes.import || mode === Modes.migrate) {
             if (!configuration.targetAccountUrl || !url.parse(configuration.targetAccountUrl).host) {
                 logger.logError(`[Configuration validation] Missing or invalid target account url: '${configuration.targetAccountUrl}'.`);
                 return false;
@@ -204,8 +204,12 @@ export class Utility {
                 logger.logError(`[Configuration validation] Option 'continueOnRuleImportFailure' is not a valid boolean.`);
                 return false;
             }
-            if (configuration.options && configuration.options.skipImportControlContributions && (configuration.options.skipImportControlContributions !== true && configuration.options.skipImportControlContributions !== false)) {
-                logger.logError(`[Configuration validation] Option 'skipImportControlContributions' is not a valid boolean.`);
+            if (configuration.options && configuration.options.continueOnIdentityDefaultValueFailure && (configuration.options.continueOnIdentityDefaultValueFailure !== true && configuration.options.continueOnIdentityDefaultValueFailure !== false)) {
+                logger.logError(`[Configuration validation] Option 'continueOnFieldImportDefaultValueFailure' is not a valid boolean.`);
+                return false;
+            }
+            if (configuration.options && configuration.options.skipImportFormContributions && (configuration.options.skipImportFormContributions !== true && configuration.options.skipImportFormContributions !== false)) {
+                logger.logError(`[Configuration validation] Option 'skipImportFormContributions' is not a valid boolean.`);
                 return false;
             }
         }

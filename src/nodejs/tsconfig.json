@@ -2,7 +2,7 @@
   "compilerOptions": {
     "noImplicitAny": false,
     "noImplicitThis": true,
-    "outDir": "../../build/NodeJs",
+    "outDir": "../../build/nodejs",
     "preserveConstEnums": true,
     "removeComments": true,
     "sourceMap": true,

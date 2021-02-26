@@ -21,7 +21,7 @@ NOTE: This only works with 'Inherited Process', for 'XML process' you may upload
 
 - From the root of source, run `npm install`
 - Build by `npm run build`
-- Execute through `node build\nodejs\nodejs\main.js <args>`
+- Execute through `node build\nodejs\nodejs\Main.js <args>`
 
 ## Documentation
 ##### Command line parameters
